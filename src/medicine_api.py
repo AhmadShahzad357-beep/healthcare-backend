@@ -1,5 +1,6 @@
 ﻿import re
 from typing import Dict, List, Optional
+from config import OPENFDA_LABEL_URL
 try:
     import requests
 except ImportError:
@@ -31,9 +32,8 @@ def check_local_interaction(drug1: str, drug2: str) -> Optional[Dict]:
 def fetch_drug_info_from_openfda(drug_name: str) -> Optional[str]:
     if not requests: return None
     try:
-        url = "https://api.fda.gov/drug/label.json"
         params = {"search": f"openfda.brand_name:{drug_name}+OR+openfda.generic_name:{drug_name}", "limit": 1}
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(OPENFDA_LABEL_URL, params=params, timeout=10)
         if response.status_code == 200:
             data = response.json()
             if data.get("results"):

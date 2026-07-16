@@ -74,6 +74,7 @@
         console.log("✅ FULL Frontend Loaded");
         let currentSessionId = null;
         let apiBaseUrl = '';
+        let apiPaths = {};
         const msgBox = document.getElementById('messageBox');
         const userInput = document.getElementById('userInput');
         const sendBtn = document.getElementById('sendBtn');
@@ -90,9 +91,10 @@
 
         async function loadConfig() {
             try {
-                const res = await fetch('/config');
+                const res = await fetch('__API_CONFIG_PATH__');
                 const data = await res.json();
                 apiBaseUrl = data.api_base_url || '';
+                apiPaths = data.api_paths || {};
             } catch (e) {
                 console.warn('Could not load config, using relative paths.', e);
             }
@@ -100,7 +102,7 @@
 
         async function loadPatients() {
             try {
-                const res = await apiFetch('/patients');
+                const res = await apiFetch(apiPaths.patients);
                 const data = await res.json();
                 if (data.patients) {
                     patientSelect.innerHTML = '';
@@ -120,7 +122,7 @@
         async function loadSessions() {
             const pid = patientSelect.value || 1;
             try {
-                const res = await apiFetch(`/sessions?patient_id=${pid}`);
+                const res = await apiFetch(`${apiPaths.sessions}?patient_id=${pid}`);
                 const data = await res.json();
                 sessionList.innerHTML = '';
                 if (data.sessions?.length > 0) {
@@ -153,7 +155,7 @@
             sessionBadge.textContent = `Session: ${sessionId.substring(0,6)}`;
             try {
                 const pid = parseInt(patientSelect.value) || 1;
-                const res = await apiFetch(`/session_history/${sessionId}?patient_id=${pid}`);
+                const res = await apiFetch(`${apiPaths.session_history}/${sessionId}?patient_id=${pid}`);
                 const data = await res.json();
                 msgBox.innerHTML = '';
                 if (data.history && data.history.length > 0) {
@@ -195,7 +197,7 @@
             msgBox.appendChild(typing);
 
             try {
-                const res = await apiFetch('/chat', {
+                const res = await apiFetch(apiPaths.chat, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 import uvicorn
 from dotenv import load_dotenv
 from twilio.twiml.messaging_response import MessagingResponse
@@ -15,7 +15,11 @@ env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from config import GROQ_MODEL, TEMPERATURE, MAX_TOKENS, HOST, PORT, API_BASE_URL
+from config import (
+    GROQ_MODEL, TEMPERATURE, MAX_TOKENS, HOST, PORT, API_BASE_URL,
+    API_CONFIG_PATH, API_CHAT_PATH, API_PATIENTS_PATH, API_SESSIONS_PATH,
+    API_SESSION_HISTORY_PATH, API_GLOBAL_HISTORY_PATH, API_WHATSAPP_PATH,
+)
 import src.agent as agent
 from src.patient_db import PatientDB
 from src.safety_guard import SafetyGuard
@@ -145,7 +149,7 @@ def process_query_logic(query: str, patient_id: int, session_id: str | None = No
     except Exception as e:
         return f"Error: {str(e)}", session_id
 
-@app.post("/whatsapp")
+@app.post(API_WHATSAPP_PATH)
 async def whatsapp_webhook(request: Request):
     try:
         form = await request.form()
@@ -171,7 +175,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     patient_id: int | None = None
 
-@app.post("/chat")
+@app.post(API_CHAT_PATH)
 async def chat_endpoint(req: ChatRequest):
     if not req.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
@@ -179,36 +183,49 @@ async def chat_endpoint(req: ChatRequest):
     reply, session_id = process_query_logic(req.query, patient_id, req.session_id)
     return {"response": reply, "session_id": session_id}
 
-@app.get("/sessions")
+@app.get(API_SESSIONS_PATH)
 async def get_sessions(patient_id: int = 1):
     sessions = db.get_sessions(patient_id)
     return {"sessions": sessions}
 
-@app.get("/patients")
+@app.get(API_PATIENTS_PATH)
 async def get_patients():
     patients = db.get_all_patients()
     return {"patients": patients}
 
-@app.get("/session_history/{session_id}")
+@app.get(f"{API_SESSION_HISTORY_PATH}/{{session_id}}")
 async def get_session_history(session_id: str, patient_id: int = 1):
     history = db.get_full_session_history(patient_id, session_id)
     return {"history": history}
 
-@app.get("/global_history")
+@app.get(API_GLOBAL_HISTORY_PATH)
 async def get_global_history(patient_id: int = 1, days: int = 30, limit: int = 30):
     history = db.get_global_history(patient_id, days, limit)
     return {"history": history}
 
-@app.get("/config")
+@app.get(API_CONFIG_PATH)
 async def get_config():
     return {
         "api_base_url": API_BASE_URL,
         "host": HOST,
         "port": PORT,
+        "api_paths": {
+            "chat": API_CHAT_PATH,
+            "patients": API_PATIENTS_PATH,
+            "sessions": API_SESSIONS_PATH,
+            "session_history": API_SESSION_HISTORY_PATH,
+            "global_history": API_GLOBAL_HISTORY_PATH,
+        },
     }
 
 frontend_path = Path(__file__).resolve().parent / "frontend"
 if frontend_path.exists():
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def serve_frontend():
+        """Inject the configurable bootstrap path into the static frontend."""
+        index_html = (frontend_path / "index.html").read_text(encoding="utf-8")
+        return HTMLResponse(index_html.replace("__API_CONFIG_PATH__", API_CONFIG_PATH))
+
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 
 if __name__ == "__main__":
