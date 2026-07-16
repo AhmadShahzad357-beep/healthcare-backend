@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceDir = path.join(rootDir, "frontend");
-const outputDir = path.join(rootDir, "dist");
+const outputDir = path.resolve(process.env.OUTPUT_DIR || process.env.OUT_DIR || path.join(rootDir, "frontend", "dist"));
 const apiBaseUrl = (process.env.FRONTEND_API_BASE_URL || "").replace(/\/$/, "");
 const configPath = process.env.FRONTEND_CONFIG_PATH || "/config";
 
