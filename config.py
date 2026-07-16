@@ -6,8 +6,12 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 PDFS_DIR = DATA_DIR / "pdfs"
 STATIC_KNOWLEDGE_DIR = DATA_DIR / "static_knowledge"
-CHROMA_DIR = BASE_DIR / "chroma_db"
-DB_PATH = BASE_DIR / "healthcare.db"
+CHROMA_DIR = Path(os.getenv("CHROMA_DIR", str(BASE_DIR / "chroma_db"))).resolve()
+DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "healthcare.db"))).resolve()
+
+HOST = os.getenv("HOST", "127.0.0.1")
+PORT = int(os.getenv("PORT", "8000"))
+API_BASE_URL = os.getenv("API_BASE_URL", "")
 
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 CHUNK_SIZE = 500

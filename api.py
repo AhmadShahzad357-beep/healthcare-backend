@@ -15,7 +15,7 @@ env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from config import GROQ_MODEL, TEMPERATURE, MAX_TOKENS
+from config import GROQ_MODEL, TEMPERATURE, MAX_TOKENS, HOST, PORT, API_BASE_URL
 import src.agent as agent
 from src.patient_db import PatientDB
 from src.safety_guard import SafetyGuard
@@ -199,9 +199,17 @@ async def get_global_history(patient_id: int = 1, days: int = 30, limit: int = 3
     history = db.get_global_history(patient_id, days, limit)
     return {"history": history}
 
+@app.get("/config")
+async def get_config():
+    return {
+        "api_base_url": API_BASE_URL,
+        "host": HOST,
+        "port": PORT,
+    }
+
 frontend_path = Path(__file__).resolve().parent / "frontend"
 if frontend_path.exists():
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host=HOST, port=PORT)

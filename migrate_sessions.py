@@ -1,8 +1,7 @@
 ﻿import sqlite3
-from pathlib import Path
-db_path = Path("healthcare.db")
+from config import DB_PATH
 
-conn = sqlite3.connect(db_path)
+conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
 # 1. Add session_id column to conversation_logs (if not exists)

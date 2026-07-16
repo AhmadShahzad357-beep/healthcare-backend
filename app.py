@@ -23,7 +23,7 @@ sys.path.insert(0, str(BASE_DIR))
 # ========================================
 # ✅ NAYE IMPORTS (src/ ki jagah rag/ aur database/)
 # ========================================
-from config import GROQ_MODEL, TEMPERATURE, MAX_TOKENS
+from config import GROQ_MODEL, TEMPERATURE, MAX_TOKENS, HOST, PORT, API_BASE_URL
 from rag.agent import route_query
 from database.patient_db import PatientDB
 from rag.safety_guard import SafetyGuard
@@ -181,6 +181,14 @@ async def get_global_history(patient_id: int = 1, days: int = 30, limit: int = 3
     history = db.get_global_history(patient_id, days, limit)
     return {"history": history}
 
+@app.get("/config")
+async def get_config():
+    return {
+        "api_base_url": API_BASE_URL,
+        "host": HOST,
+        "port": PORT,
+    }
+
 # ========================================
 # FRONTEND (Optional)
 # ========================================
@@ -189,4 +197,4 @@ if frontend_path.exists():
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host=HOST, port=PORT)
