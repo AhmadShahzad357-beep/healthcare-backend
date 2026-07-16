@@ -6,3 +6,5 @@ chroma_db/
 cache/
 *.sqlite3
 *.sqlite
+dist/
+.vercel/
