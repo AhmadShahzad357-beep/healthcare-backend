@@ -74,7 +74,6 @@ class PatientDB:
         conn.close()
         return [{"id": row[0], "name": row[1], "age": row[2]} for row in rows]
 
-    # ================== SESSION / MEMORY FUNCTIONS ==================
     def create_session(self, patient_id: int, title: str = "New Chat") -> str:
         session_id = str(uuid.uuid4())[:8]
         conn = self._get_connection()
@@ -156,12 +155,7 @@ class PatientDB:
         conn.close()
         return [{"user": row[0], "bot": row[1]} for row in rows]
 
-    # ================== 🆕 CROSS-SESSION GLOBAL HISTORY (ChatGPT Style) ==================
     def get_global_history(self, patient_id: int, time_days: int = 7, limit: int = 20) -> List[Dict]:
-        """
-        Patient ki saari chats (across sessions) se aakhri 'time_days' din ki messages lao.
-        Cross-session memory ke liye.
-        """
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute(

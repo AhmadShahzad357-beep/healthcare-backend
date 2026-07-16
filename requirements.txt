@@ -9,3 +9,4 @@ uvicorn
 twilio
 pandas
 langchain-text-splitters
+diskcache
