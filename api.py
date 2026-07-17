@@ -3,10 +3,9 @@ import sys
 import re
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 import uvicorn
 from dotenv import load_dotenv
 from twilio.twiml.messaging_response import MessagingResponse
@@ -26,16 +25,18 @@ from src.safety_guard import SafetyGuard
 from src.cache import get_cached_response, set_cached_response
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
+_allowed_origins = ["*"] if _allowed_origins_env.strip() == "*" else [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_allowed_origins, allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-print(f"🔑 API Key Loaded: {'Yes' if GROQ_API_KEY else 'No'}")
+print(f"API Key Loaded: {'Yes' if GROQ_API_KEY else 'No'}")
 
 try:
     from groq import Groq
     groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 except Exception as e:
-    print(f"❌ Groq init error: {e}")
+    print(f"Groq init error: {e}")
     groq_client = None
 
 safety = SafetyGuard()
@@ -43,7 +44,7 @@ db = PatientDB()
 
 BASE_SYSTEM_PROMPT = """
 You are a strict medical assistant for a hospital.
-🔒 RULES:
+RULES:
 1. You will be given "MEDICAL CONTEXT".
 2. ONLY answer based on this context. If not present, say "I don't know".
 3. NEVER diagnose. Always recommend: "Please consult a doctor."
@@ -155,7 +156,7 @@ async def whatsapp_webhook(request: Request):
         form = await request.form()
         incoming_msg = form.get('Body', '').strip()
         sender = form.get('From', '').replace("whatsapp:", "")
-        print(f"📩 WhatsApp: {sender} -> {incoming_msg}")
+        print(f"WhatsApp: {sender} -> {incoming_msg}")
         patient_id = 1
         cached = get_cached_response(incoming_msg, patient_id)
         if cached:
@@ -167,7 +168,7 @@ async def whatsapp_webhook(request: Request):
         resp.message(reply)
         return PlainTextResponse(content=str(resp), media_type="application/xml")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         return PlainTextResponse(content="Error", status_code=500)
 
 class ChatRequest(BaseModel):
@@ -217,16 +218,6 @@ async def get_config():
             "global_history": API_GLOBAL_HISTORY_PATH,
         },
     }
-
-frontend_path = Path(__file__).resolve().parent / "frontend"
-if frontend_path.exists():
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def serve_frontend():
-        """Inject the configurable bootstrap path into the static frontend."""
-        index_html = (frontend_path / "index.html").read_text(encoding="utf-8")
-        return HTMLResponse(index_html.replace("__API_CONFIG_PATH__", API_CONFIG_PATH))
-
-    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)

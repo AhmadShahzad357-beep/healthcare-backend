@@ -10,3 +10,4 @@ twilio
 pandas
 langchain-text-splitters
 diskcache
+python-multipart
