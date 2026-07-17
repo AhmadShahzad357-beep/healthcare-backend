@@ -2,7 +2,6 @@
 *.pyc
 .env
 healthcare.db
-chroma_db/
 cache/
 *.sqlite3
 *.sqlite
