@@ -36,8 +36,12 @@ MEDICAL_CONTEXT = [
     "report", "reports", "test", "allergy", "allergies", "history", "appointment",
     "appointments", "checkup", "check up", "blood", "sugar", "bp", "age", "umar",
     "umr", "naam", "name", "gender", "jins", "blood group", "medicine", "dawai",
-    "diagnosis", "condition", "bimari", "disease", "prescription", "lab",
-    "mulaqat", "doctor", "contact", "phone", "number"
+    "diagnosis", "diagnosed", "diagnoses", "condition", "bimari", "disease",
+    "prescription", "lab", "mulaqat", "doctor", "contact", "phone", "number",
+    "status", "cholesterol", "ldl", "hdl", "level", "levels", "creatinine",
+    "hemoglobin", "uric", "uric acid", "triglycerides", "vitamin", "compare",
+    "result", "results", "department", "visit", "visited", "visits",
+    "completed", "cancelled", "missed", "scheduled", "profile"
 ]
 
 
@@ -71,12 +75,9 @@ def resolve_patient_id(query: str, default_patient_id: int = 1):
 
 def is_patient_query(query: str, name_matched: bool) -> bool:
     query_lower = query.lower()
-    has_pronoun = any(p in query_lower for p in PRONOUNS)
+    has_pronoun = any(p in query_lower for p in PRONOUNS) or bool(re.search(r"i|i've|i'm", query_lower))
     has_medical = any(m in query_lower for m in MEDICAL_CONTEXT)
     if name_matched:
-        # A specific patient was named -> almost certainly asking about that
-        # patient's record, even without an explicit medical keyword
-        # (e.g. "Sara Tran kaun hai?").
         return True
     return has_pronoun and has_medical
 
