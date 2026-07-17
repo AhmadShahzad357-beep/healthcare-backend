@@ -5,7 +5,7 @@
   },
   "deploy": {
     "startCommand": "python -c \"import scripts.seed_database; scripts.seed_database.seed_database()\" && uvicorn api:app --host 0.0.0.0 --port $PORT",
-    "healthcheckPath": "/",
+    "healthcheckPath": "/config",
     "restartPolicy": "on-failure",
     "restartPolicyMaxRetries": 3,
     "healthcheckTimeout": 60
