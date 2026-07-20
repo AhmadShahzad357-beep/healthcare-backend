@@ -11,3 +11,6 @@ pandas
 langchain-text-splitters
 diskcache
 python-multipart
+slowapi
+pyjwt
+bcrypt
