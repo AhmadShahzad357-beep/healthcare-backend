@@ -14,6 +14,13 @@ INTERACTION_DB = {
     ("metformin", "insulin"): {"severity": "Moderate", "message": "May increase risk of hypoglycemia."},
 }
 
+# Only plain drug-name-like text is allowed through to the OpenFDA query
+# builder below. This function is only ever called today with names that
+# were already filtered against a fixed whitelist upstream (see
+# COMMON_DRUGS in agent.py), but validating here too means this stays safe
+# as defense-in-depth even if that changes later.
+_VALID_DRUG_NAME = re.compile(r"^[a-zA-Z\s\-]{1,50}$")
+
 def _normalize_drug_name(name: str) -> str:
     name = name.lower().strip()
     synonyms = {
@@ -30,7 +37,11 @@ def check_local_interaction(drug1: str, drug2: str) -> Optional[Dict]:
     return INTERACTION_DB.get(key1) or INTERACTION_DB.get(key2)
 
 def fetch_drug_info_from_openfda(drug_name: str) -> Optional[str]:
-    if not requests: return None
+    if not requests:
+        return None
+    if not _VALID_DRUG_NAME.match(drug_name.strip()):
+        print(f"⚠️ Rejected invalid drug name for OpenFDA lookup: {drug_name!r}")
+        return None
     try:
         params = {"search": f"openfda.brand_name:{drug_name}+OR+openfda.generic_name:{drug_name}", "limit": 1}
         response = requests.get(OPENFDA_LABEL_URL, params=params, timeout=10)
@@ -43,9 +54,12 @@ def fetch_drug_info_from_openfda(drug_name: str) -> Optional[str]:
                     info.append(f"Indication: {result['indications_and_usage'][0][:200]}...")
                 if result.get("warnings"):
                     info.append(f"Warning: {result['warnings'][0][:200]}...")
-                if info: return "\n".join(info)
+                if info:
+                    return "\n".join(info)
         return None
-    except: return None
+    except Exception as e:
+        print(f"⚠️ OpenFDA lookup failed for {drug_name!r}: {e}")
+        return None
 
 def check_medicine_interaction(drug1: str, drug2: str) -> Dict:
     result = {"drug1": drug1, "drug2": drug2, "interaction_found": False, "severity": "Unknown", "message": "", "source": "Local DB"}
