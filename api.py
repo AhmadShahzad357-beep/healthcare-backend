@@ -1,17 +1,22 @@
-﻿import os
+import os
 import sys
 import re
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.responses import PlainTextResponse
 import uvicorn
 from dotenv import load_dotenv
 from twilio.twiml.messaging_response import MessagingResponse
+from twilio.request_validator import RequestValidator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 env_path = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=env_path)
+# encoding="utf-8-sig" safely strips a UTF-8 BOM if present in .env
+load_dotenv(dotenv_path=env_path, encoding="utf-8-sig")
 
 sys.path.append(str(Path(__file__).resolve().parent))
 from config import (
@@ -23,14 +28,50 @@ import src.agent as agent
 from src.patient_db import PatientDB
 from src.safety_guard import SafetyGuard
 from src.cache import get_cached_response, set_cached_response
+from src.auth import (
+    authenticate_staff,
+    authenticate_patient,
+    create_access_token,
+    get_current_user,
+    authorize_patient_access,
+)
 
 app = FastAPI()
-_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
-_allowed_origins = ["*"] if _allowed_origins_env.strip() == "*" else [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=_allowed_origins, allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
+
+# --- Rate limiting ---------------------------------------------------------
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# --- CORS --------------------------------------------------------------
+# No silent "*" fallback: you must explicitly opt into wildcard CORS (only
+# ever appropriate for local development), otherwise you must list your
+# real frontend domain(s). This matters a lot once real patient data and
+# authenticated requests are involved.
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
+if not _allowed_origins_env:
+    print("⚠️  ALLOWED_ORIGINS not set in .env — defaulting to http://localhost:3000 (dev only).")
+    print("   Set ALLOWED_ORIGINS=https://your-real-domain.com before deploying to production.")
+    _allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+elif _allowed_origins_env == "*":
+    print("⚠️  ALLOWED_ORIGINS=* — any website can call this API. Do NOT use this in production.")
+    _allowed_origins = ["*"]
+else:
+    _allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=_allowed_origins != ["*"],  # browsers reject credentials+"*" anyway
+)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-print(f"API Key Loaded: {'Yes' if GROQ_API_KEY else 'No'}")
+if GROQ_API_KEY:
+    print(f"🔑 GROQ_API_KEY loaded (starts with {GROQ_API_KEY[:6]}...)")
+else:
+    print("❌ GROQ_API_KEY not found in .env — chat responses will fail until this is fixed.")
 
 try:
     from groq import Groq
@@ -42,13 +83,18 @@ except Exception as e:
 safety = SafetyGuard()
 db = PatientDB()
 
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+_twilio_validator = RequestValidator(TWILIO_AUTH_TOKEN) if TWILIO_AUTH_TOKEN else None
+
 BASE_SYSTEM_PROMPT = """
-You are a strict medical assistant for a hospital.
+You are a  medical assistant for a hospital.
 RULES:
 1. You will be given "MEDICAL CONTEXT".
 2. ONLY answer based on this context. If not present, say "I don't know".
 3. NEVER diagnose. Always recommend: "Please consult a doctor."
 4. LANGUAGE RULE (strict): Always respond in English, UNLESS the user's question is written in Roman Urdu (Urdu written in English letters, e.g. "meri age kitni hai"), in which case respond in Roman Urdu. NEVER respond in French, Spanish, Italian, German, or any other language, regardless of names or context content.
+5. NEVER diagnose. Always recommend: "Please consult a doctor."
+6. If the CONTEXT above contains information relevant to the question (even partially), you MUST use it to answer — do not say "I don't know" or deflect to "consult a doctor" if the answer is clearly present in the Patient Profile, Medical History, Lab Reports, or Appointments sections.
 """
 
 def get_dynamic_system_prompt(query: str, patient_id: int):
@@ -137,6 +183,9 @@ def process_query_logic(query: str, patient_id: int, session_id: str | None = No
         db.save_conversation_with_session(patient_id, session_id, query, reply)
         return reply, session_id
 
+    if not groq_client:
+        return "⚠️ The assistant isn't configured correctly. Please contact support.", session_id
+
     try:
         response = groq_client.chat.completions.create(
             model=GROQ_MODEL,
@@ -148,13 +197,29 @@ def process_query_logic(query: str, patient_id: int, session_id: str | None = No
         db.save_conversation_with_session(patient_id, session_id, query, reply)
         return reply, session_id
     except Exception as e:
-        return f"Error: {str(e)}", session_id
+        # Log the real error server-side only. Never send raw exception
+        # details (stack traces, internal paths, library internals) back
+        # to the client - that's an information-disclosure risk.
+        print(f"❌ Groq call failed: {e}")
+        return "Sorry, something went wrong generating a response. Please try again.", session_id
 
 @app.post(API_WHATSAPP_PATH)
+@limiter.limit("20/minute")
 async def whatsapp_webhook(request: Request):
     try:
         form = await request.form()
-        incoming_msg = form.get('Body', '').strip()
+
+        # Verify the request genuinely came from Twilio before doing
+        # anything with it. Without this, anyone who finds this URL can
+        # POST fake messages, burn your Groq quota, or spoof a sender.
+        if _twilio_validator:
+            signature = request.headers.get("X-Twilio-Signature", "")
+            if not _twilio_validator.validate(str(request.url), dict(form), signature):
+                raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+        else:
+            print("⚠️  TWILIO_AUTH_TOKEN not set — webhook signature is NOT being verified!")
+
+        incoming_msg = form.get('Body', '').strip()[:1000]
         sender = form.get('From', '').replace("whatsapp:", "")
         print(f"WhatsApp: {sender} -> {incoming_msg}")
         patient_id = 1
@@ -167,57 +232,95 @@ async def whatsapp_webhook(request: Request):
         resp = MessagingResponse()
         resp.message(reply)
         return PlainTextResponse(content=str(resp), media_type="application/xml")
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error: {e}")
         return PlainTextResponse(content="Error", status_code=500)
 
+# --- Auth --------------------------------------------------------------
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
+
+@app.post("/auth/login")
+@limiter.limit("5/minute")  # slow down password guessing
+async def login(request: Request, req: LoginRequest):
+    # Try staff first, then patient. Whichever matches decides the role
+    # baked into the token -- the client never gets to pick its own role.
+    if authenticate_staff(req.username, req.password):
+        token = create_access_token({"sub": req.username, "role": "staff"})
+        return {"access_token": token, "token_type": "bearer", "role": "staff"}
+
+    patient_id = authenticate_patient(req.username, req.password)
+    if patient_id is not None:
+        token = create_access_token({
+            "sub": req.username,
+            "role": "patient",
+            "patient_id": patient_id,
+        })
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "role": "patient",
+            "patient_id": patient_id,
+        }
+
+    raise HTTPException(status_code=401, detail="Invalid username or password")
+
 class ChatRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=1000)
     session_id: str | None = None
     patient_id: int | None = None
 
 @app.post(API_CHAT_PATH)
-async def chat_endpoint(req: ChatRequest):
-    if not req.query:
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
-    patient_id = req.patient_id or 1
+@limiter.limit("15/minute")
+async def chat_endpoint(request: Request, req: ChatRequest, user: dict = Depends(get_current_user)):
+    # Patient-role tokens can never be redirected to someone else's
+    # record via the request body: if patient_id is omitted we use the
+    # caller's own id rather than falling back to a shared default.
+    patient_id = req.patient_id or user.get("patient_id") or 1
+    authorize_patient_access(patient_id, user)
+    db.log_access(patient_id, accessed_by=user["sub"], endpoint="chat")
     reply, session_id = process_query_logic(req.query, patient_id, req.session_id)
     return {"response": reply, "session_id": session_id}
 
 @app.get(API_SESSIONS_PATH)
-async def get_sessions(patient_id: int = 1):
+async def get_sessions(patient_id: int = 1, user: dict = Depends(get_current_user)):
+    authorize_patient_access(patient_id, user)
+    db.log_access(patient_id, accessed_by=user["sub"], endpoint="sessions")
     sessions = db.get_sessions(patient_id)
     return {"sessions": sessions}
 
 @app.get(API_PATIENTS_PATH)
-async def get_patients():
+async def get_patients(user: dict = Depends(get_current_user)):
+    # Full patient directory is a staff-only capability -- a patient
+    # token has no legitimate reason to list every other patient.
+    if user.get("role") != "staff":
+        raise HTTPException(status_code=403, detail="Staff access required")
     patients = db.get_all_patients()
     return {"patients": patients}
 
 @app.get(f"{API_SESSION_HISTORY_PATH}/{{session_id}}")
-async def get_session_history(session_id: str, patient_id: int = 1):
+async def get_session_history(session_id: str, patient_id: int = 1, user: dict = Depends(get_current_user)):
+    authorize_patient_access(patient_id, user)
+    db.log_access(patient_id, accessed_by=user["sub"], endpoint="session_history")
     history = db.get_full_session_history(patient_id, session_id)
     return {"history": history}
 
 @app.get(API_GLOBAL_HISTORY_PATH)
-async def get_global_history(patient_id: int = 1, days: int = 30, limit: int = 30):
+async def get_global_history(patient_id: int = 1, days: int = 30, limit: int = 30, user: dict = Depends(get_current_user)):
+    authorize_patient_access(patient_id, user)
+    db.log_access(patient_id, accessed_by=user["sub"], endpoint="global_history")
     history = db.get_global_history(patient_id, days, limit)
     return {"history": history}
 
 @app.get(API_CONFIG_PATH)
 async def get_config():
-    return {
-        "api_base_url": API_BASE_URL,
-        "host": HOST,
-        "port": PORT,
-        "api_paths": {
-            "chat": API_CHAT_PATH,
-            "patients": API_PATIENTS_PATH,
-            "sessions": API_SESSIONS_PATH,
-            "session_history": API_SESSION_HISTORY_PATH,
-            "global_history": API_GLOBAL_HISTORY_PATH,
-        },
-    }
+    # Intentionally minimal: this is also the Railway healthcheck target,
+    # so it must stay public/unauthenticated, but it shouldn't leak
+    # internal wiring (host/port/paths) to the world.
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)
