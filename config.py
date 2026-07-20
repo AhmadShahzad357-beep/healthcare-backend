@@ -23,8 +23,8 @@ API_WHATSAPP_PATH = os.getenv("API_WHATSAPP_PATH", "/whatsapp")
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
-TOP_K = 5
-SIMILARITY_THRESHOLD = 0.35
+TOP_K = 5              # (agar pehle se 5 hai to same rakhein)
+SIMILARITY_THRESHOLD = 0.25   # 0.35 se kam kar dein — zyada relevant chunks pass hongay
 
 LLM_PROVIDER = "groq"
 GROQ_MODEL = "llama-3.1-8b-instant"
