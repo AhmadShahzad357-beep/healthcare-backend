@@ -1,4 +1,17 @@
-﻿import sqlite3
+﻿"""
+⚠️  DANGER: this script DROPS and recreates the patients, medical_history,
+lab_reports, appointments, and conversation_logs tables, replacing them
+with fresh fake (Faker-generated) data.
+
+Run this manually, ONLY when you actually want to reset/reseed demo data:
+    python scripts/seed_database.py
+
+NEVER wire this into an automatic deploy/start command (it used to be in
+railway.json's startCommand -- that has been removed on purpose). Doing so
+would silently destroy all real patient data and chat history on every
+restart/redeploy.
+"""
+import sqlite3
 import random
 from datetime import datetime, timedelta
 from faker import Faker

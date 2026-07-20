@@ -2,7 +2,7 @@ import os
 import sys
 import re
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from fastapi.responses import PlainTextResponse
@@ -28,13 +28,9 @@ import src.agent as agent
 from src.patient_db import PatientDB
 from src.safety_guard import SafetyGuard
 from src.cache import get_cached_response, set_cached_response
-from src.auth import (
-    authenticate_staff,
-    authenticate_patient,
-    create_access_token,
-    get_current_user,
-    authorize_patient_access,
-)
+# NOTE: patient/staff authentication (src/auth.py) is intentionally not
+# wired in here. All patient-data routes below trust patient_id as sent
+# by the client with no login/token check.
 
 app = FastAPI()
 
@@ -238,36 +234,6 @@ async def whatsapp_webhook(request: Request):
         print(f"Error: {e}")
         return PlainTextResponse(content="Error", status_code=500)
 
-# --- Auth --------------------------------------------------------------
-class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=100)
-    password: str = Field(..., min_length=1, max_length=200)
-
-@app.post("/auth/login")
-@limiter.limit("5/minute")  # slow down password guessing
-async def login(request: Request, req: LoginRequest):
-    # Try staff first, then patient. Whichever matches decides the role
-    # baked into the token -- the client never gets to pick its own role.
-    if authenticate_staff(req.username, req.password):
-        token = create_access_token({"sub": req.username, "role": "staff"})
-        return {"access_token": token, "token_type": "bearer", "role": "staff"}
-
-    patient_id = authenticate_patient(req.username, req.password)
-    if patient_id is not None:
-        token = create_access_token({
-            "sub": req.username,
-            "role": "patient",
-            "patient_id": patient_id,
-        })
-        return {
-            "access_token": token,
-            "token_type": "bearer",
-            "role": "patient",
-            "patient_id": patient_id,
-        }
-
-    raise HTTPException(status_code=401, detail="Invalid username or password")
-
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000)
     session_id: str | None = None
@@ -275,43 +241,33 @@ class ChatRequest(BaseModel):
 
 @app.post(API_CHAT_PATH)
 @limiter.limit("15/minute")
-async def chat_endpoint(request: Request, req: ChatRequest, user: dict = Depends(get_current_user)):
-    # Patient-role tokens can never be redirected to someone else's
-    # record via the request body: if patient_id is omitted we use the
-    # caller's own id rather than falling back to a shared default.
-    patient_id = req.patient_id or user.get("patient_id") or 1
-    authorize_patient_access(patient_id, user)
-    db.log_access(patient_id, accessed_by=user["sub"], endpoint="chat")
+async def chat_endpoint(request: Request, req: ChatRequest):
+    # No auth: patient_id is trusted as sent by the client.
+    patient_id = req.patient_id or 1
+    db.log_access(patient_id, accessed_by="anonymous", endpoint="chat")
     reply, session_id = process_query_logic(req.query, patient_id, req.session_id)
     return {"response": reply, "session_id": session_id}
 
 @app.get(API_SESSIONS_PATH)
-async def get_sessions(patient_id: int = 1, user: dict = Depends(get_current_user)):
-    authorize_patient_access(patient_id, user)
-    db.log_access(patient_id, accessed_by=user["sub"], endpoint="sessions")
+async def get_sessions(patient_id: int = 1):
+    db.log_access(patient_id, accessed_by="anonymous", endpoint="sessions")
     sessions = db.get_sessions(patient_id)
     return {"sessions": sessions}
 
 @app.get(API_PATIENTS_PATH)
-async def get_patients(user: dict = Depends(get_current_user)):
-    # Full patient directory is a staff-only capability -- a patient
-    # token has no legitimate reason to list every other patient.
-    if user.get("role") != "staff":
-        raise HTTPException(status_code=403, detail="Staff access required")
+async def get_patients():
     patients = db.get_all_patients()
     return {"patients": patients}
 
 @app.get(f"{API_SESSION_HISTORY_PATH}/{{session_id}}")
-async def get_session_history(session_id: str, patient_id: int = 1, user: dict = Depends(get_current_user)):
-    authorize_patient_access(patient_id, user)
-    db.log_access(patient_id, accessed_by=user["sub"], endpoint="session_history")
+async def get_session_history(session_id: str, patient_id: int = 1):
+    db.log_access(patient_id, accessed_by="anonymous", endpoint="session_history")
     history = db.get_full_session_history(patient_id, session_id)
     return {"history": history}
 
 @app.get(API_GLOBAL_HISTORY_PATH)
-async def get_global_history(patient_id: int = 1, days: int = 30, limit: int = 30, user: dict = Depends(get_current_user)):
-    authorize_patient_access(patient_id, user)
-    db.log_access(patient_id, accessed_by=user["sub"], endpoint="global_history")
+async def get_global_history(patient_id: int = 1, days: int = 30, limit: int = 30):
+    db.log_access(patient_id, accessed_by="anonymous", endpoint="global_history")
     history = db.get_global_history(patient_id, days, limit)
     return {"history": history}
 

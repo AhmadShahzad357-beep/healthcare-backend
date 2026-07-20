@@ -34,6 +34,28 @@ class PatientDB:
             return {"id": row[0], "name": row[1], "age": row[2], "gender": row[3], "contact": row[4], "blood_group": row[5], "allergies": row[6]}
         return None
 
+    def log_access(self, patient_id: int, accessed_by: str, endpoint: str):
+        """Audit trail: record who looked up which patient's data and when.
+        Required for any real healthcare deployment (HIPAA-style
+        accountability) and useful for spotting abuse."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS access_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_id INTEGER NOT NULL,
+                accessed_by TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute(
+            "INSERT INTO access_log (patient_id, accessed_by, endpoint) VALUES (?, ?, ?)",
+            (patient_id, accessed_by, endpoint)
+        )
+        conn.commit()
+        conn.close()
+
     def get_medical_history(self, patient_id: int) -> List[Dict]:
         conn = self._get_connection()
         cursor = conn.cursor()

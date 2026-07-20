@@ -1,4 +1,4 @@
-﻿faker
+faker
 pymupdf
 chromadb
 sentence-transformers
@@ -11,6 +11,6 @@ pandas
 langchain-text-splitters
 diskcache
 python-multipart
-slowapi
 pyjwt
 bcrypt
+slowapi
