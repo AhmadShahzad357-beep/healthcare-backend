@@ -79,7 +79,6 @@ except Exception as e:
 safety = SafetyGuard()
 db = PatientDB()
 
-<<<<<<< HEAD
 # Auto-create tables (IF NOT EXISTS) and seed demo patients ONLY if the
 # patients table is empty. This is what makes /patients actually return
 # data on a fresh deploy (e.g. Railway), where healthcare.db is gitignored
@@ -91,8 +90,6 @@ try:
 except Exception as e:
     print(f"❌ Database bootstrap failed: {e}")
 
-=======
->>>>>>> fd0bbc3d172bfc25f4d6870bdf709ac5dc98e92d
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 _twilio_validator = RequestValidator(TWILIO_AUTH_TOKEN) if TWILIO_AUTH_TOKEN else None
 
